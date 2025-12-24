@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>My Notes</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        notion: {
+                            light: '#FFFFFF',
+                            dim: '#F7F7F5',
+                            dark: '#191919',
+                            darkDim: '#202020',
+                            border: '#E1E1E0',
+                            darkBorder: '#2F2F2F',
+                            hover: '#EFEFEF',
+                            darkHover: '#2C2C2C'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body { font-family: 'Inter', sans-serif; transition: background-color 0.3s, color 0.3s; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #d3d3d3; border-radius: 4px; }
+        .dark ::-webkit-scrollbar-thumb { background: #444; }
+        
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade { animation: fadeIn 0.2s ease-out forwards; }
+    </style>
+</head>
+<body class="bg-notion-dim text-gray-900 dark:bg-notion-dark dark:text-gray-100 transition-colors duration-300">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- 1. INDEXED DB HELPER ---
+        const DB_NAME = 'CampusBaseDB_v12'; 
+        const STORE_NAME = 'courses';
+
+        const dbHelper = {
+            open: () => {
+                return new Promise((resolve, reject) => {
+                    const request = indexedDB.open(DB_NAME, 1);
+                    request.onupgradeneeded = (event) => {
+                        const db = event.target.result;
+                        if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                    };
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+            },
+            getAll: async () => {
+                const db = await dbHelper.open();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, 'readonly');
+                    const store = tx.objectStore(STORE_NAME);
+                    const request = store.getAll();
+                    request.onsuccess = () => resolve(request.result || []);
+                    request.onerror = () => reject(request.error);
+                });
+            },
+            save: async (course) => {
+                const db = await dbHelper.open();
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                store.put(course);
+                return tx.complete;
+            },
+            clearAll: async () => {
+                const db = await dbHelper.open();
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                store.clear();
+                return tx.complete;
+            },
+            delete: async (id) => {
+                const db = await dbHelper.open();
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                store.delete(id);
+                return tx.complete;
+            }
+        };
+
+        // --- ICONS ---
+        const Icon = ({ name, size = 18, className = "" }) => {
+            const icons = {
+                plus: "M12 5v14M5 12h14",
+                arrowLeft: "M19 12H5M12 19l-7-7 7-7",
+                mapPin: "M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z M12 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
+                clock: "M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm0-2a8 8 0 1 0 0-16 8 8 0 0 0 0 16zm-1-8V6a1 1 0 1 1 2 0v5a1 1 0 0 1-1 1H8a1 1 0 1 1 0-2h3z",
+                trash: "M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2",
+                settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6",
+                external: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3",
+                file: "M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z",
+                folder: "M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z",
+                upload: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12",
+                x: "M18 6L6 18M6 6l12 12",
+                moon: "M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z",
+                sun: "M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
+                chevronRight: "M9 18l6-6-6-6",
+                search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z",
+                pencil: "M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z",
+                grid: "M4 4h4v4H4zm6 0h4v4h-4zm6 0h4v4h-4zM4 10h4v4H4zm6 0h4v4h-4zm6 0h4v4h-4zM4 16h4v4H4zm6 0h4v4h-4zm6 0h4v4h-4z",
+                list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
+                alignLeft: "M17 9.5H3M21 4.5H3M21 14.5H3M17 19.5H3",
+                download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"
+            };
+            return (
+                <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                    <path d={icons[name] || ""} />
+                </svg>
+            );
+        };
+
+        const COLORS = {
+            gray:   { bg: 'bg-gray-100 dark:bg-[#37352f]', text: 'text-gray-700 dark:text-gray-300', cover: 'bg-[#9B9A97]' },
+            brown:  { bg: 'bg-orange-50 dark:bg-[#44332a]', text: 'text-orange-800 dark:text-orange-200', cover: 'bg-[#64473A]' },
+            orange: { bg: 'bg-orange-100 dark:bg-[#49291e]', text: 'text-orange-800 dark:text-orange-200', cover: 'bg-[#D9730D]' },
+            yellow: { bg: 'bg-yellow-100 dark:bg-[#403924]', text: 'text-yellow-800 dark:text-yellow-200', cover: 'bg-[#DFAB01]' },
+            green:  { bg: 'bg-green-100 dark:bg-[#28392d]', text: 'text-green-800 dark:text-green-200', cover: 'bg-[#0F7B6C]' },
+            blue:   { bg: 'bg-blue-100 dark:bg-[#243545]', text: 'text-blue-800 dark:text-blue-200', cover: 'bg-[#0B6E99]' },
+            purple: { bg: 'bg-purple-100 dark:bg-[#322841]', text: 'text-purple-800 dark:text-purple-200', cover: 'bg-[#6940A5]' },
+            pink:   { bg: 'bg-pink-100 dark:bg-[#432634]', text: 'text-pink-800 dark:text-pink-200', cover: 'bg-[#AD1A72]' },
+            red:    { bg: 'bg-red-100 dark:bg-[#462725]', text: 'text-red-800 dark:text-red-200', cover: 'bg-[#E03E3E]' },
+        };
+
+        // --- APP COMPONENT ---
+        function App() {
+            const [courses, setCourses] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [view, setView] = useState('dashboard'); 
+            const [activeCourseId, setActiveCourseId] = useState(null);
+            const [currentFolderId, setCurrentFolderId] = useState(null);
+            const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light');
+            const [searchQuery, setSearchQuery] = useState('');
+            const [resourceViewMode, setResourceViewMode] = useState('list'); // 'list' or 'grid'
+
+            // Modals & Editors
+            const [showSettings, setShowSettings] = useState(false);
+            const [showResourceModal, setShowResourceModal] = useState(false);
+            const [previewFile, setPreviewFile] = useState(null);
+            const [noteEditorOpen, setNoteEditorOpen] = useState(false);
+            const [editingNote, setEditingNote] = useState(null);
+
+            // Form Data
+            const [newResTitle, setNewResTitle] = useState('');
+            const [newResUrl, setNewResUrl] = useState('');
+            const [newResFile, setNewResFile] = useState(null);
+            const [resourceType, setResourceType] = useState('note');
+
+            useEffect(() => {
+                if (theme === 'dark') document.documentElement.classList.add('dark');
+                else document.documentElement.classList.remove('dark');
+                localStorage.setItem('theme', theme);
+            }, [theme]);
+
+            useEffect(() => { loadCourses(); }, []);
+
+            const loadCourses = async () => {
+                try {
+                    const data = await dbHelper.getAll();
+                    setCourses(data);
+                } catch (e) { console.error(e); }
+                setLoading(false);
+            };
+
+            const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
+            const activeCourse = courses.find(c => c.id === activeCourseId);
+
+            // --- BREADCRUMB LOGIC ---
+            const getBreadcrumbs = () => {
+                if (!currentFolderId || !activeCourse) return [];
+                const path = [];
+                let tempId = currentFolderId;
+                while(tempId) {
+                    const folder = activeCourse.links.find(l => l.id === tempId);
+                    if(folder) { path.unshift(folder); tempId = folder.parentId; } 
+                    else break;
+                }
+                return path;
+            };
+
+            // --- COMPUTED: SEARCH RESULTS ---
+            const searchResults = useMemo(() => {
+                if (!searchQuery.trim()) return [];
+                const q = searchQuery.toLowerCase();
+                const results = [];
+                courses.forEach(c => {
+                    c.links.forEach(l => {
+                        if (l.title.toLowerCase().includes(q)) {
+                            results.push({ type: 'resource', item: l, course: c });
+                        }
+                    });
+                });
+                return results;
+            }, [searchQuery, courses]);
+
+            // --- BACKUP & RESTORE ---
+            const downloadBackup = () => {
+                const dataStr = JSON.stringify(courses);
+                const blob = new Blob([dataStr], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `notes_backup_${new Date().toISOString().slice(0,10)}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            };
+
+            const restoreBackup = async (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+                if (!confirm("This will replace all current notes with the backup file. Are you sure?")) return;
+
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    try {
+                        const importedCourses = JSON.parse(e.target.result);
+                        await dbHelper.clearAll();
+                        for (const c of importedCourses) {
+                            await dbHelper.save(c);
+                        }
+                        setCourses(importedCourses);
+                        alert("Backup restored successfully!");
+                    } catch (err) {
+                        alert("Error restoring file. Make sure it's a valid JSON backup.");
+                        console.error(err);
+                    }
+                };
+                reader.readAsText(file);
+            };
+
+            // --- CRUD ---
+            const addCourse = async () => {
+                const newCourse = { 
+                    id: Date.now().toString(), 
+                    code: 'NEW', 
+                    name: 'Untitled Course', 
+                    building: 'TBD', 
+                    room: '', 
+                    schedule: '',
+                    scratchpad: '', 
+                    color: 'gray', 
+                    links: []
+                };
+                await dbHelper.save(newCourse);
+                setCourses([...courses, newCourse]);
+                setActiveCourseId(newCourse.id);
+                setView('course');
+                setShowSettings(true);
+            };
+
+            const updateCourse = async (id, field, value) => {
+                const updated = courses.map(c => c.id === id ? { ...c, [field]: value } : c);
+                setCourses(updated);
+                await dbHelper.save(updated.find(c => c.id === id));
+            };
+
+            const deleteCourse = async (id) => {
+                if(confirm("Delete this page?")) {
+                    await dbHelper.delete(id);
+                    setCourses(courses.filter(c => c.id !== id));
+                    setView('dashboard');
+                    setShowSettings(false);
+                }
+            };
+
+            const saveScratchpad = async (text) => {
+                if (!activeCourse) return;
+                const updatedCourse = { ...activeCourse, scratchpad: text };
+                setCourses(courses.map(c => c.id === activeCourseId ? updatedCourse : c));
+                await dbHelper.save(updatedCourse);
+            };
+
+            // --- RESOURCE / NOTE CRUD ---
+            const saveResource = async () => {
+                if (!newResTitle) return alert("Title required");
+                const newId = Date.now().toString();
+                let resource = { id: newId, title: newResTitle, type: resourceType, parentId: currentFolderId || null };
+                
+                if (resourceType === 'link') resource.url = newResUrl;
+                else if (resourceType === 'file') {
+                    if (!newResFile) return alert("No file");
+                    resource.fileBlob = newResFile; 
+                    resource.mimeType = newResFile.type;
+                } else if (resourceType === 'note') {
+                    resource.content = ''; // Empty start
+                    setTimeout(() => {
+                        setEditingNote(resource);
+                        setNoteEditorOpen(true);
+                    }, 100);
+                }
+
+                const updatedCourse = { ...activeCourse, links: [...activeCourse.links, resource] };
+                setCourses(courses.map(c => c.id === activeCourseId ? updatedCourse : c));
+                await dbHelper.save(updatedCourse);
+                setNewResTitle(''); setNewResUrl(''); setNewResFile(null); setShowResourceModal(false);
+            };
+
+            const saveNoteContent = async (noteId, newContent, newTitle) => {
+                const updatedLinks = activeCourse.links.map(l => l.id === noteId ? { ...l, content: newContent, title: newTitle } : l);
+                const updatedCourse = { ...activeCourse, links: updatedLinks };
+                setCourses(courses.map(c => c.id === activeCourseId ? updatedCourse : c));
+                await dbHelper.save(updatedCourse);
+            };
+
+            const deleteResource = async (resId, type) => {
+                const msg = type === 'folder' ? "Delete folder and all contents?" : "Delete item?";
+                if(!confirm(msg)) return;
+                
+                let idsToDelete = new Set([resId]);
+                const findChildren = (parentId) => {
+                    const children = activeCourse.links.filter(l => l.parentId === parentId);
+                    children.forEach(child => { idsToDelete.add(child.id); if(child.type === 'folder') findChildren(child.id); });
+                };
+                if (type === 'folder') findChildren(resId);
+
+                const updatedLinks = activeCourse.links.filter(l => !idsToDelete.has(l.id));
+                const updatedCourse = { ...activeCourse, links: updatedLinks };
+                setCourses(courses.map(c => c.id === activeCourseId ? updatedCourse : c));
+                await dbHelper.save(updatedCourse);
+            };
+
+            const handleResourceClick = (link) => {
+                if (link.type === 'folder') { setCurrentFolderId(link.id); return; }
+                if (link.type === 'note') { setEditingNote(link); setNoteEditorOpen(true); return; }
+                if (link.type === 'link') { window.open(link.url, '_blank'); return; }
+                if (link.fileBlob) {
+                    const objectUrl = URL.createObjectURL(link.fileBlob);
+                    setPreviewFile({ url: objectUrl, type: link.mimeType, title: link.title });
+                }
+            };
+
+            if (loading) return <div className="h-screen flex items-center justify-center text-gray-400">Loading...</div>;
+
+            // --- FILTERING FOR FOLDER VIEW ---
+            const visibleItems = activeCourse 
+                ? activeCourse.links.filter(l => (l.parentId || null) === (currentFolderId || null))
+                : [];
+
+            const currentFolder = currentFolderId ? activeCourse.links.find(l => l.id === currentFolderId) : null;
+            const breadcrumbs = getBreadcrumbs();
+
+            return (
+                <div className="min-h-screen pb-20">
+                    
+                    {/* --- DASHBOARD --- */}
+                    {view === 'dashboard' && (
+                        <div className="max-w-7xl mx-auto p-4 md:p-8 animate-fade">
+                            {/* CLEAN HEADER: Search + Backup/Theme controls */}
+                            <header className="flex flex-col md:flex-row items-center justify-between mb-8 gap-4">
+                                <div className="w-full md:max-w-lg relative">
+                                    <div className="absolute left-3 top-2.5 text-gray-400"><Icon name="search" size={16} /></div>
+                                    <input 
+                                        value={searchQuery}
+                                        onChange={e => setSearchQuery(e.target.value)}
+                                        className="w-full pl-9 pr-3 py-2 bg-white dark:bg-notion-darkDim border border-gray-200 dark:border-notion-darkBorder rounded-lg shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                                        placeholder="Search notes, files, classes..."
+                                    />
+                                    {searchQuery && (
+                                        <div className="absolute top-11 left-0 right-0 bg-white dark:bg-[#252525] border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden max-h-60 overflow-y-auto">
+                                            {searchResults.length === 0 ? (
+                                                <div className="p-3 text-xs text-gray-500 text-center">No results found.</div>
+                                            ) : (
+                                                searchResults.map((res, i) => (
+                                                    <div key={i} onClick={() => { setActiveCourseId(res.course.id); setCurrentFolderId(null); setView('course'); setSearchQuery(''); }} className="p-2 hover:bg-gray-100 dark:hover:bg-white/5 cursor-pointer border-b border-gray-100 dark:border-gray-800 last:border-0">
+                                                        <div className="text-xs text-gray-400 uppercase font-semibold mb-0.5">{res.course.code} • {res.type}</div>
+                                                        <div className="text-sm text-gray-800 dark:text-gray-200">{res.item.title}</div>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <button onClick={downloadBackup} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors" title="Backup Data"><Icon name="download" size={20} /></button>
+                                    <label className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors cursor-pointer" title="Restore Data">
+                                        <input type="file" onChange={restoreBackup} hidden accept=".json" />
+                                        <Icon name="upload" size={20} />
+                                    </label>
+                                    <div className="w-px h-6 bg-gray-200 dark:bg-gray-700 mx-1"></div>
+                                    <button onClick={toggleTheme} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors">
+                                        <Icon name={theme === 'light' ? 'moon' : 'sun'} size={20} />
+                                    </button>
+                                </div>
+                            </header>
+
+                            <div className="flex justify-between items-end mb-4">
+                                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Active Courses</h2>
+                                <button onClick={addCourse} className="text-blue-600 hover:text-blue-700 font-medium text-sm flex items-center gap-1">
+                                    <Icon name="plus" size={16} /> Add Class
+                                </button>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                                {courses.map(course => (
+                                    <div key={course.id} onClick={() => { setActiveCourseId(course.id); setCurrentFolderId(null); setView('course'); }} 
+                                        className="group bg-white dark:bg-notion-darkDim rounded-xl shadow-sm border border-gray-200 dark:border-notion-darkBorder cursor-pointer overflow-hidden hover:shadow-md transition-all relative">
+                                        
+                                        <div className={`h-28 ${COLORS[course.color].cover} opacity-90 group-hover:opacity-100 transition-opacity`}></div>
+                                        
+                                        <div className="p-5 relative">
+                                            <div className="absolute -top-4 left-5 flex gap-2">
+                                                <div className={`px-3 py-1.5 rounded-lg shadow-sm flex items-center justify-center text-xs font-bold uppercase tracking-wide whitespace-nowrap ${COLORS[course.color].bg} ${COLORS[course.color].text}`}>
+                                                    {course.code || '???'}
+                                                </div>
+                                            </div>
+
+                                            <h3 className="font-bold text-gray-900 dark:text-gray-100 text-lg leading-tight truncate mt-3 mb-1">{course.name}</h3>
+                                            
+                                            <div className="flex flex-col gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                                                <div className="flex items-center gap-2">
+                                                    <Icon name="mapPin" size={12} />
+                                                    <span>{course.building} {course.room && `• Rm ${course.room}`}</span>
+                                                </div>
+                                                {course.schedule && (
+                                                    <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 font-medium">
+                                                        <Icon name="clock" size={12} />
+                                                        <span>{course.schedule}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            {courses.length === 0 && <div className="p-20 text-center border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-xl text-gray-400 mt-4">No active courses.</div>}
+                        </div>
+                    )}
+
+                    {/* --- COURSE VIEW --- */}
+                    {view === 'course' && activeCourse && (
+                        <div className="animate-fade bg-white dark:bg-notion-dark min-h-screen">
+                            {/* Nav */}
+                            <nav className="sticky top-0 z-20 bg-white/95 dark:bg-notion-dark/95 backdrop-blur-sm border-b border-gray-200 dark:border-notion-darkBorder px-4 py-2 flex justify-between items-center h-12">
+                                <button onClick={() => setView('dashboard')} className="text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5 px-2 py-1 rounded flex items-center gap-1 transition-colors">
+                                    <Icon name="arrowLeft" size={16} /> Back
+                                </button>
+                                <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate max-w-[200px]">{activeCourse.name}</div>
+                                <div className="flex gap-2">
+                                    <button onClick={toggleTheme} className="p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5 rounded"><Icon name={theme==='light'?'moon':'sun'} size={16}/></button>
+                                    <button onClick={() => setShowSettings(true)} className="text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5 px-2 py-1 rounded flex items-center gap-1"><Icon name="settings" size={16}/> Settings</button>
+                                </div>
+                            </nav>
+
+                            {/* Cover */}
+                            <div className={`h-40 md:h-56 w-full ${COLORS[activeCourse.color].cover}`}></div>
+
+                            {/* Content */}
+                            <div className="max-w-7xl mx-auto px-6 md:px-12 -mt-8 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-10">
+                                
+                                {/* LEFT COL: INFO & RESOURCES (9 cols) */}
+                                <div className="lg:col-span-9">
+                                    {/* Header */}
+                                    <div className="mb-8">
+                                        <div className="mb-6 flex gap-2">
+                                            <div className={`inline-flex px-3 py-2 rounded shadow-sm text-sm font-bold uppercase tracking-wide border border-white/20 ${COLORS[activeCourse.color].bg} ${COLORS[activeCourse.color].text}`}>
+                                                {activeCourse.code}
+                                            </div>
+                                        </div>
+                                        <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-3 leading-tight">{activeCourse.name}</h1>
+                                        <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600 dark:text-gray-400">
+                                            <span className="flex items-center gap-1"><Icon name="mapPin" size={14} /> {activeCourse.building} {activeCourse.room && `• ${activeCourse.room}`}</span>
+                                            {activeCourse.schedule && <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400"><Icon name="clock" size={14} /> {activeCourse.schedule}</span>}
+                                        </div>
+                                    </div>
+
+                                    {/* Controls (Breadcrumbs + View Toggle) */}
+                                    <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pb-2 border-b border-gray-100 dark:border-gray-800">
+                                        <div className="flex items-center gap-2 text-sm text-gray-500 overflow-x-auto whitespace-nowrap">
+                                            <button onClick={() => setCurrentFolderId(null)} className={`hover:text-black dark:hover:text-white hover:underline transition-colors ${!currentFolderId ? 'font-semibold text-black dark:text-white' : ''}`}>Home</button>
+                                            {breadcrumbs.map((folder, index) => (
+                                                <React.Fragment key={folder.id}>
+                                                    <Icon name="chevronRight" size={14} className="text-gray-300 dark:text-gray-600 flex-shrink-0" />
+                                                    <button onClick={() => setCurrentFolderId(folder.id)} className={`transition-colors ${index === breadcrumbs.length - 1 ? "font-semibold text-gray-900 dark:text-white pointer-events-none" : "hover:text-black dark:hover:text-white hover:underline"}`}>{folder.title}</button>
+                                                </React.Fragment>
+                                            ))}
+                                        </div>
+                                        <div className="flex gap-1 bg-gray-100 dark:bg-notion-darkDim p-1 rounded-lg">
+                                            <button onClick={() => setResourceViewMode('list')} className={`p-1.5 rounded ${resourceViewMode==='list' ? 'bg-white dark:bg-[#333] shadow text-black dark:text-white' : 'text-gray-400 hover:text-gray-600'}`}><Icon name="list" size={16}/></button>
+                                            <button onClick={() => setResourceViewMode('grid')} className={`p-1.5 rounded ${resourceViewMode==='grid' ? 'bg-white dark:bg-[#333] shadow text-black dark:text-white' : 'text-gray-400 hover:text-gray-600'}`}><Icon name="grid" size={16}/></button>
+                                        </div>
+                                    </div>
+
+                                    {/* Resources Area */}
+                                    <div className="min-h-[300px]">
+                                        {visibleItems.length === 0 && <p className="text-gray-400 dark:text-gray-500 italic text-sm py-10 text-center bg-gray-50 dark:bg-notion-darkDim/30 rounded-lg border border-dashed border-gray-200 dark:border-gray-800">No notes or files yet.<br/><button onClick={() => setShowResourceModal(true)} className="text-blue-500 hover:underline mt-2">Add your first item</button></p>}
+                                        
+                                        {/* VIEW MODE: LIST */}
+                                        {resourceViewMode === 'list' && (
+                                            <div className="space-y-1">
+                                                {visibleItems.map(link => (
+                                                    <div key={link.id} className="group flex items-center justify-between p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-notion-darkDim transition-colors cursor-pointer select-none border border-transparent hover:border-gray-200 dark:hover:border-gray-700" onClick={(e) => { if(!e.target.closest('button')) handleResourceClick(link)}}>
+                                                        <div className="flex items-center gap-4 overflow-hidden">
+                                                            <span className={`flex items-center justify-center ${link.type === 'folder' ? 'text-gray-800 dark:text-gray-200' : link.type==='note' ? 'text-green-600' : 'text-gray-400 dark:text-gray-500'}`}>
+                                                                <Icon name={link.type === 'folder' ? 'folder' : link.type === 'file' ? 'file' : link.type==='note' ? 'alignLeft' : 'external'} size={20} />
+                                                            </span>
+                                                            <div>
+                                                                <div className={`truncate ${link.type === 'folder' ? 'font-semibold text-gray-900 dark:text-gray-100' : 'text-gray-700 dark:text-gray-300 font-medium'}`}>{link.title}</div>
+                                                                {link.type === 'note' && <div className="text-[10px] text-gray-400">Text Note</div>}
+                                                            </div>
+                                                        </div>
+                                                        <button onClick={() => deleteResource(link.id, link.type)} className="opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-500 hover:bg-gray-200 dark:hover:bg-white/10 rounded"><Icon name="trash" size={16} /></button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {/* VIEW MODE: GRID */}
+                                        {resourceViewMode === 'grid' && (
+                                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                                                {visibleItems.map(link => (
+                                                    <div key={link.id} className="group aspect-square bg-gray-50 dark:bg-notion-darkDim border border-gray-200 dark:border-notion-darkBorder rounded-xl p-4 flex flex-col justify-between hover:shadow-md transition-all cursor-pointer relative" onClick={(e) => { if(!e.target.closest('button')) handleResourceClick(link)}}>
+                                                        <div className={`flex-1 flex items-center justify-center ${link.type === 'folder' ? 'text-gray-800 dark:text-gray-200' : link.type==='note' ? 'text-green-600' : 'text-gray-400 dark:text-gray-500'}`}>
+                                                            <Icon name={link.type === 'folder' ? 'folder' : link.type === 'file' ? 'file' : link.type==='note' ? 'alignLeft' : 'external'} size={48} />
+                                                        </div>
+                                                        <div className="text-center">
+                                                            <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate">{link.title}</div>
+                                                            <div className="text-[10px] text-gray-400 uppercase mt-1">{link.type}</div>
+                                                        </div>
+                                                        <button onClick={() => deleteResource(link.id, link.type)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-500 hover:bg-white dark:hover:bg-[#333] rounded shadow-sm"><Icon name="trash" size={14} /></button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                        
+                                        <button onClick={() => setShowResourceModal(true)} className="flex items-center gap-2 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200 mt-6 px-3 py-2 rounded-lg bg-gray-50 dark:bg-notion-darkDim hover:bg-gray-100 dark:hover:bg-[#2A2A2A] transition-colors text-sm font-medium"><Icon name="plus" size={16} /> Add Note / File</button>
+                                    </div>
+                                </div>
+
+                                {/* RIGHT COL: PINNED INFO (3 cols) */}
+                                <div className="lg:col-span-3 space-y-8 lg:mt-24">
+                                    <div className="bg-yellow-50 dark:bg-[#2A2620] rounded-xl p-5 border border-yellow-100 dark:border-transparent relative group">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <h3 className="font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2 text-xs uppercase tracking-wide opacity-75"><Icon name="pencil" size={12} /> Pinned Info</h3>
+                                            <span className="text-[10px] text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">Auto-saves</span>
+                                        </div>
+                                        <textarea 
+                                            defaultValue={activeCourse.scratchpad || ''}
+                                            onBlur={(e) => saveScratchpad(e.target.value)}
+                                            placeholder="Zoom links, office hours, etc..."
+                                            className="w-full h-40 bg-transparent resize-none outline-none text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 font-mono leading-relaxed"
+                                        ></textarea>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- MODALS --- */}
+                    
+                    {/* Preview / File Viewer */}
+                    {previewFile && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade">
+                            <div className="bg-white dark:bg-notion-darkDim w-full h-[90vh] max-w-5xl rounded-lg shadow-2xl flex flex-col overflow-hidden border border-gray-200 dark:border-gray-700">
+                                <div className="h-12 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center px-4 bg-gray-50 dark:bg-notion-dark">
+                                    <span className="font-semibold text-sm text-gray-700 dark:text-gray-200 truncate">{previewFile.title}</span>
+                                    <div className="flex gap-2">
+                                        <a href={previewFile.url} download={previewFile.title} className="text-xs font-medium px-3 py-1 bg-gray-200 dark:bg-gray-700 dark:text-gray-200 rounded hover:bg-gray-300">Download</a>
+                                        <button onClick={() => { if(previewFile.url) URL.revokeObjectURL(previewFile.url); setPreviewFile(null); }} className="text-xs font-medium px-3 py-1 bg-black text-white dark:bg-white dark:text-black rounded">Close</button>
+                                    </div>
+                                </div>
+                                <div className="flex-1 bg-gray-100 dark:bg-[#111] relative overflow-auto flex items-center justify-center p-4">
+                                    {previewFile.type.includes('image') ? <img src={previewFile.url} className="max-w-full max-h-full object-contain shadow-lg" /> : 
+                                     previewFile.type.includes('pdf') ? <iframe src={previewFile.url} className="w-full h-full border-none rounded shadow-sm bg-white" /> : 
+                                     <div className="text-center text-gray-500"><Icon name="file" size={48} className="mx-auto mb-2 opacity-50"/><p>Preview not available</p></div>}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* NOTE EDITOR (Full Screen) */}
+                    {noteEditorOpen && editingNote && (
+                        <div className="fixed inset-0 z-50 bg-white dark:bg-notion-dark flex flex-col animate-fade">
+                            <div className="h-14 border-b border-gray-100 dark:border-notion-darkBorder flex items-center justify-between px-4 md:px-8">
+                                <input 
+                                    value={editingNote.title} 
+                                    onChange={(e) => {
+                                        setEditingNote({...editingNote, title: e.target.value});
+                                        saveNoteContent(editingNote.id, editingNote.content, e.target.value);
+                                    }}
+                                    className="text-lg font-bold bg-transparent outline-none text-gray-900 dark:text-white flex-1"
+                                />
+                                <button onClick={() => setNoteEditorOpen(false)} className="text-sm font-medium text-gray-500 hover:text-black dark:hover:text-white px-3 py-1">Close</button>
+                            </div>
+                            <textarea
+                                value={editingNote.content || ''}
+                                onChange={(e) => {
+                                    setEditingNote({...editingNote, content: e.target.value});
+                                    saveNoteContent(editingNote.id, e.target.value, editingNote.title);
+                                }}
+                                className="flex-1 p-4 md:p-8 md:max-w-3xl md:mx-auto w-full bg-transparent resize-none outline-none text-gray-800 dark:text-gray-200 text-base leading-relaxed placeholder-gray-300"
+                                placeholder="Start typing your notes here..."
+                            />
+                        </div>
+                    )}
+
+                    {/* Add Resource Modal */}
+                    {showResourceModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade">
+                            <div className="bg-white dark:bg-notion-darkDim w-full max-w-sm rounded-xl shadow-xl p-6">
+                                <h3 className="font-bold text-gray-900 dark:text-white mb-4">Add Item</h3>
+                                <div className="grid grid-cols-4 gap-1 bg-gray-100 dark:bg-[#2F2F2F] p-1 rounded-lg mb-4">
+                                    <button onClick={() => setResourceType('note')} className={`py-1.5 text-xs font-medium rounded ${resourceType==='note'?'bg-white dark:bg-[#444] shadow text-black dark:text-white':'text-gray-500'}`}>Note</button>
+                                    <button onClick={() => setResourceType('file')} className={`py-1.5 text-xs font-medium rounded ${resourceType==='file'?'bg-white dark:bg-[#444] shadow text-black dark:text-white':'text-gray-500'}`}>File</button>
+                                    <button onClick={() => setResourceType('link')} className={`py-1.5 text-xs font-medium rounded ${resourceType==='link'?'bg-white dark:bg-[#444] shadow text-black dark:text-white':'text-gray-500'}`}>Link</button>
+                                    <button onClick={() => setResourceType('folder')} className={`py-1.5 text-xs font-medium rounded ${resourceType==='folder'?'bg-white dark:bg-[#444] shadow text-black dark:text-white':'text-gray-500'}`}>Folder</button>
+                                </div>
+                                <input value={newResTitle} onChange={e => setNewResTitle(e.target.value)} className="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-[#111] dark:text-white p-2 rounded mb-3 outline-none focus:border-blue-500" placeholder="Title (e.g. Lecture 1)" autoFocus />
+                                {resourceType === 'link' && <input value={newResUrl} onChange={e => setNewResUrl(e.target.value)} className="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-[#111] dark:text-white p-2 rounded mb-4 outline-none font-mono text-sm" placeholder="https://" />}
+                                {resourceType === 'file' && (
+                                    <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 p-4 rounded-lg text-center mb-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-[#222] relative">
+                                        <input type="file" onChange={e => setNewResFile(e.target.files[0])} className="absolute inset-0 opacity-0 cursor-pointer" accept=".pdf,image/*" />
+                                        <Icon name="upload" className="mx-auto text-gray-400 mb-2" />
+                                        <p className="text-xs text-gray-500 dark:text-gray-400">{newResFile ? newResFile.name : "Select PDF or Image"}</p>
+                                    </div>
+                                )}
+                                <div className="flex gap-2">
+                                    <button onClick={() => setShowResourceModal(false)} className="flex-1 py-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 rounded">Cancel</button>
+                                    <button onClick={saveResource} className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded">Create</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Settings Modal */}
+                    {showSettings && activeCourse && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade">
+                            <div className="bg-white dark:bg-notion-darkDim w-full max-w-lg rounded-xl shadow-2xl overflow-hidden">
+                                <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
+                                    <h3 className="font-bold text-gray-800 dark:text-gray-100">Course Settings</h3>
+                                    <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-800 dark:hover:text-white"><Icon name="x" /></button>
+                                </div>
+                                <div className="p-6 space-y-5">
+                                    <div><label className="text-xs font-semibold text-gray-500 uppercase">Course Name</label><input value={activeCourse.name} onChange={e => updateCourse(activeCourse.id, 'name', e.target.value)} className="w-full mt-1 p-2 bg-gray-50 dark:bg-[#2F2F2F] dark:text-white border border-gray-200 dark:border-gray-600 rounded outline-none" /></div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div><label className="text-xs font-semibold text-gray-500 uppercase">Code</label><input value={activeCourse.code} onChange={e => updateCourse(activeCourse.id, 'code', e.target.value)} className="w-full mt-1 p-2 bg-gray-50 dark:bg-[#2F2F2F] dark:text-white border border-gray-200 dark:border-gray-600 rounded outline-none" /></div>
+                                        <div><label className="text-xs font-semibold text-gray-500 uppercase">Building</label><input value={activeCourse.building} onChange={e => updateCourse(activeCourse.id, 'building', e.target.value)} className="w-full mt-1 p-2 bg-gray-50 dark:bg-[#2F2F2F] dark:text-white border border-gray-200 dark:border-gray-600 rounded outline-none" /></div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div><label className="text-xs font-semibold text-gray-500 uppercase">Room</label><input value={activeCourse.room||''} onChange={e => updateCourse(activeCourse.id, 'room', e.target.value)} className="w-full mt-1 p-2 bg-gray-50 dark:bg-[#2F2F2F] dark:text-white border border-gray-200 dark:border-gray-600 rounded outline-none" /></div>
+                                        <div><label className="text-xs font-semibold text-gray-500 uppercase">Schedule (e.g. Mon 10am)</label><input value={activeCourse.schedule||''} onChange={e => updateCourse(activeCourse.id, 'schedule', e.target.value)} className="w-full mt-1 p-2 bg-gray-50 dark:bg-[#2F2F2F] dark:text-white border border-gray-200 dark:border-gray-600 rounded outline-none" /></div>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-semibold text-gray-500 uppercase mb-2 block">Color</label>
+                                        <div className="flex flex-wrap gap-3">{Object.keys(COLORS).map(c => (<button key={c} onClick={() => updateCourse(activeCourse.id, 'color', c)} className={`w-8 h-8 rounded-full ${COLORS[c].cover} ${activeCourse.color===c?'ring-2 ring-offset-2 ring-gray-400':''}`} />))}</div>
+                                    </div>
+                                    <div className="pt-4 border-t border-gray-100 dark:border-gray-700 flex justify-between">
+                                        <button onClick={() => deleteCourse(activeCourse.id)} className="text-red-500 text-sm hover:underline">Delete Page</button>
+                                        <button onClick={() => setShowSettings(false)} className="bg-gray-900 dark:bg-white text-white dark:text-black px-4 py-2 rounded text-sm font-medium">Done</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
